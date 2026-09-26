@@ -1,0 +1,87 @@
+DS3 Linear Mouse Fix - Experimental A/B v0.8.2 review
+=====================================================
+
+Scope
+-----
+This build extends the validated v0.8.1 experiment to the ADS/RMB mouse-look
+profile. It is still an A/B experimental build, not the final lightweight mod.
+
+Recognized profiles
+-------------------
+HIP:
+  ABC510 parent return RVA = 0x0033F3ED
+  D820 return RVA          = 0x0033F407
+
+ADS/RMB:
+  ABC510 parent return RVA = 0x00149F17
+  D820 return RVA          = 0x00149F2E
+
+Shared internal AB9830 return RVA = 0x006BC599
+
+Runtime link validation
+-----------------------
+The build verifies all five links before installing ABC510/AB9830 hooks:
+  0x0033F3E8 -> ABC510   (HIP)
+  0x00149F12 -> ABC510   (ADS)
+  0x006BC594 -> AB9830   (inside ABC510)
+  0x0033F402 -> D820     (HIP)
+  0x00149F29 -> D820     (ADS)
+It also keeps the existing D820 signature/prologue/9-caller verification.
+
+AB9830 behavior
+---------------
+Vanilla AB9830 is always called first.
+pre_x/pre_y are restored only if all existing v0.8 conditions are true:
+  - EnableLinearMouseFix=1
+  - verified HIP or ADS ABC510 path
+  - AB9830 direct return = 0x006BC599
+  - same-thread fresh unconsumed DirectInput mouse sample
+  - non-zero X/Y mouse delta
+  - fresh age <= 5 ms
+  - pre magnitude > 1
+No write occurs under magnitude 1.
+
+D820 behavior
+-------------
+Vanilla D820 is always called first. Its history and object state are left intact.
+The reconstruction function is source-identical to v0.8.1 and therefore uses the
+same post-vanilla snapshot/model that produced D820_v08_offline_model.csv.
+
+A D820 output is rewritten only if:
+  - EnableLinearMouseFix=1
+  - caller is the HIP or ADS D820 return listed above
+  - a same-thread mouse-tail latch is active
+  - the latch profile exactly matches that D820 caller profile
+  - the validated model succeeds
+  - abs(preclamp_x)>limit or abs(preclamp_y)>limit
+Then only returned X/Y become preclamp*scale. self/history is untouched.
+
+The latch is profile-tagged. A HIP latch cannot modify ADS D820 and vice versa.
+It exits after 3 targeted samples under the limit or 250 ms timeout.
+
+Telemetry counters added
+------------------------
+  hip_ab_bypass
+  hip_d820_unclamp
+  ads_ab_bypass
+  ads_d820_unclamp
+  ads_tail
+Aggregate v0.8.1 counters remain present.
+
+Known limitation of offline ADS replay
+--------------------------------------
+The supplied v0.8.1 ADS capture did not log ADS AB9830 pre-values because the old
+path gate recognized HIP only. Therefore the exact number of ADS AB9830 bypasses
+cannot be replayed from that old .bin. The ADS D820 counterfactual can be replayed
+exactly because the D820 post-state model was logged for all callers.
+
+Build review
+------------
+- x86 PE32 DLL
+- /W4 /WX clean build
+- no Raw Input registration
+- no WndProc subclass
+- no on-disk deadspace3.exe modification
+- controller/other D820 callers are not rewritten
+- imported DLLs: KERNEL32.dll only (other APIs resolved dynamically)
+- two /Brepro clean builds byte-for-byte identical

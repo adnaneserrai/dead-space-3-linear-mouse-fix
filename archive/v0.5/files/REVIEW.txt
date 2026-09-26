@@ -1,0 +1,29 @@
+DS3_RawMouseProbe v0.5 review
+=============================
+
+Verified in source/build:
+- No RegisterRawInputDevices call is made to create or replace a Raw Input registration.
+- No window is created and no WndProc is subclassed.
+- RegisterRawInputDevices and GetRawInputData hooks call the vanilla API exactly once
+  through the retained original path and restore the API's post-call LastError.
+- GetRawInputData size-query calls are counted but cannot become mouse movement records.
+- Actual mouse records require RID_INPUT + pData != NULL + successful byte copy +
+  readable RAWINPUT + RIM_TYPEMOUSE + sufficient RAWINPUT size.
+- Caller return address, module base and module RVA are recorded for API calls.
+- Loaded modules are mapped by Toolhelp and rescanned every 250 ms.
+- Conservative x86 process-wide hotpatch is attempted only for the classic 5-byte
+  padding + 8B FF entry. No generic/guessed disassembler is used.
+- IAT fallback patches only intact slots. Foreign IAT hooks are not overwritten.
+- D820 still uses runtime signature search, exact PE fingerprint, nine expected
+  direct call-return RVAs and verified original prologue.
+- D820 calls vanilla first and never replaces input/output values.
+- Producer paths enqueue fixed 384-byte records; WriteFile occurs only in writer/status threads.
+- Drops, write errors, API counts, IAT slot counts/conflicts and D820 counts are recorded.
+- The ASI has only KERNEL32.dll static imports; USER32 and other helpers are resolved dynamically.
+- /W4 /WX build succeeds.
+- Two clean /Brepro builds were byte-identical.
+
+Important interpretation boundary:
+This probe demonstrates which module registers Raw Input and which module/callsite
+actually reads RAWINPUT through GetRawInputData. It still does not measure final
+camera yaw/pitch. D820 remains an intermediate processor observation.

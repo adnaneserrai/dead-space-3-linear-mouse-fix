@@ -1,0 +1,9 @@
+records=3121
+max_abs_model_error=3.1789143673e-07
+median_abs_model_error=3.65042962004e-10
+p99_abs_model_error=1.01461863355e-07
+p95_relative_error=1.4954281215e-07
+slow R: DI_sumX=3230 D820_records=972 actual_sum_out_x=160.832786526 actual_per_count=0.049793432 unclamped_sum_out_x=160.832788745 unclamped_per_count=0.049793433 retained=0.999999986 clamp_x=0 max_abs_preclamp_x=0.265856322 mean_effective_dt=0.027050516 mean_scale=1.238367150
+flick L: DI_sumX=-2686 D820_records=66 actual_sum_out_x=-66.214073530 actual_per_count=0.024651554 unclamped_sum_out_x=-133.257074550 unclamped_per_count=0.049611718 retained=0.496889743 clamp_x=20 max_abs_preclamp_x=6.743997914 mean_effective_dt=0.027023632 mean_scale=1.239471754
+flick R: DI_sumX=3361 D820_records=56 actual_sum_out_x=62.052329778 actual_per_count=0.018462461 unclamped_sum_out_x=168.977412365 unclamped_per_count=0.050275933 retained=0.367222630 clamp_x=20 max_abs_preclamp_x=9.519499525 mean_effective_dt=0.026964066 mean_scale=1.242230311
+slow L: DI_sumX=-2955 D820_records=885 actual_sum_out_x=-146.816187030 actual_per_count=0.049683989 unclamped_sum_out_x=-146.816188042 unclamped_per_count=0.049683989 retained=0.999999993 clamp_x=0 max_abs_preclamp_x=0.218958325 mean_effective_dt=0.027037064 mean_scale=1.238919555

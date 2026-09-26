@@ -1,0 +1,1 @@
+abf7d2f06e9aba614424d9919bf3d19062c8094ac1ce940d7691960c31c3b571  /mnt/data/ds3_directinput_probe_v07/DS3_DirectInputProbe.asi

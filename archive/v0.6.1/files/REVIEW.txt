@@ -1,0 +1,57 @@
+DS3 DirectInput + D820 Probe v0.6.1 - review
+=============================================
+
+Crash addressed
+---------------
+v0.6 replaced the IDirectInput8 object's vptr with a shadow vtable immediately after DirectInput8Create. The captured session ended after that replacement and before CreateDevice. v0.6.1 removes that mechanism entirely.
+
+COM/vtable behavior
+-------------------
+- No write to *(void***)IDirectInput8 occurs.
+- No write to *(void***)IDirectInputDevice8 occurs.
+- DirectInput8Create is still observed via the known-good deadspace3.exe IAT slot.
+- On a returned IDirectInput8 object, the original vtable pointer is retained.
+- All 11 original IDirectInput8 slots are recorded.
+- Only original-vtable slot 3 (CreateDevice) is a candidate for a 4-byte in-place patch.
+- Slot 4 (EnumDevices) is never modified.
+- The original slot-3 function pointer is published in the vtable->originals table before the slot is patched.
+- A conservative conflict check requires slot 3 to resolve to the same module as slot 0. Otherwise no overwrite occurs and conflict_mask records the refusal.
+
+Mouse devices
+-------------
+- A device is added to the mouse-self list only after CreateDevice was requested with GUID_SysMouse, GUID_SysMouseEm, or GUID_SysMouseEm2 and returned successfully.
+- Its COM vptr is never changed.
+- Its original vtable is keyed in a shared vtable->originals table.
+- Candidate slots are 7 Acquire, 8 Unacquire, 9 GetDeviceState, 10 GetDeviceData, 11 SetDataFormat, 13 SetCooperativeLevel.
+- Each selected slot is patched only if its current target resolves to the same module as vtable slot 0. A mismatch is recorded as a conflict and left untouched.
+- Because vtables may be shared with keyboard/other devices, every mouse-method hook checks self. Unknown self pointers immediately call the recorded original without mouse logging.
+
+Diagnostics
+-----------
+status.txt can emit:
+  DI8_VTABLE object=... vtable=...
+  DI8_SLOT3 original=<module+rva> patched=... conflict=...
+  DI8_SLOT4 EnumDevices=<module+rva>
+  DI8_SLOTS [0]=... through [10]=...
+  CREATEDEVICE_ENTER ...
+  CreateDevice ...
+  MOUSE_VTABLE ... patched_mask=... conflict_mask=...
+
+Binary format
+-------------
+Version 6.1 / magic DS3DI61. Record size remains 512 bytes. New records store the original vtable targets and patch/conflict masks. The supplied v0.6.1 decoder is required.
+
+D820
+----
+The D820 hook body is byte-for-byte unchanged at source level from v0.6.
+
+Raw Input
+---------
+No RegisterRawInputDevices call exists in the probe. GetRegisteredRawInputDevices is used only for passive polling.
+
+Known limitations
+-----------------
+- In-place vtable-slot patching changes a shared vtable globally. Self filtering prevents mouse logging/behavior changes for known non-mouse callers, but any third-party code that independently inspects the slot pointer will see the hook while active.
+- The conservative module-owner heuristic can refuse to patch a legitimate proxy/wrapper implementation whose vtable methods intentionally live in different modules. This is preferred to overwriting an ambiguous pre-existing hook.
+- QueryInterface on the mouse device is not intercepted. If DS3 switches to a different interface/vtable after creation, the log may show creation but not later reads; that should be diagnosed before broadening interception.
+- No final camera yaw/pitch is measured. The probe measures DirectInput and D820 only.

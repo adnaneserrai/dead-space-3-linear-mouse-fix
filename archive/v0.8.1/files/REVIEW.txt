@@ -1,0 +1,81 @@
+DS3 Linear Mouse Fix - Experimental A/B v0.8.1 review
+======================================================
+
+What is preserved
+-----------------
+- DirectInput mouse observation from v0.8.
+- Verified camera path gate:
+    ABC510 parent return 0x0033F3ED
+    AB9830 direct return 0x006BC599
+    D820 return 0x0033F407
+- AB9830 vanilla is always called first.
+- D820 vanilla is always called first.
+- No executable file is changed on disk.
+- No Raw Input receiver is registered.
+- No WndProc is subclassed.
+- No DPI/sensitivity multiplier or compensating curve is introduced.
+
+AB9830 behavior
+---------------
+Exactly the validated v0.8 experiment: only a targeted camera-path call with a
+fresh, non-zero, same-thread DirectInput mouse delta and pre magnitude >1 can
+restore pre_x/pre_y after vanilla AB9830. Under magnitude 1 it never rewrites.
+
+D820 reconstruction
+-------------------
+Uses the POST-vanilla snapshot, matching D820_v08_offline_model.csv exactly:
+  current_dt = post[0x18]
+  current_x  = post[0x10] * (current_dt / post_count[0x1C])
+  current_y  = post[0x14] * (current_dt / post_count[0x1C])
+  previous_dt = post[0x28]
+  previous_x  = post[0x20] * (previous_dt / post_count[0x2C])
+  previous_y  = post[0x24] * (previous_dt / post_count[0x2C])
+
+If previous count > 0:
+  alpha = post[0x08] * previous_dt / (previous_dt + current_dt)
+  preclamp = current*(1-alpha) + previous*alpha
+  effective_dt = current_dt*(1-alpha) + previous_dt*alpha
+else:
+  preclamp = current
+  effective_dt = current_dt
+
+  scale = effective_dt > 0 ? 1/(effective_dt*30) : 0
+
+Vanilla is left untouched unless the selective mouse latch is active AND a
+preclamp component exceeds the vanilla post[0x0C] limit. In that case only the
+returned X/Y are replaced with preclamp_x*scale / preclamp_y*scale. D820's
+internal history/state has already been updated by vanilla and is not changed.
+
+A/B guarantee when INI=0
+------------------------
+EnableLinearMouseFix=0 disables BOTH AB9830 restoration and D820 output
+replacement. Hooks still observe/log, but no input/camera value is rewritten.
+
+Controller isolation
+--------------------
+With no active mouse-tail latch, D820 is never rewritten, including controller
+activity. The latch can only start from an actually applied, same-thread fresh
+DirectInput mouse bypass. A simultaneous controller movement during the short
+active mouse-tail window cannot be independently identified by this build; for
+the controlled experiment, do not use the controller. This limitation does not
+change the requested guarantee that controller-only operation with no mouse gate
+active remains vanilla.
+
+Tail behavior
+-------------
+- start: actual AB9830 bypass
+- refresh: every subsequent actual bypass
+- correct: only target D820 caller and only while reconstructed preclamp exceeds limit
+- no write: any sample fully within the D820 limit
+- stable exit: 3 consecutive targeted samples within limit
+- safety timeout: 250 ms from the latest bypass
+
+Build review
+------------
+- clang-cl 17 / lld-link 17
+- target i686-pc-windows-msvc
+- /O2 /Brepro /W4 /WX
+- no CRT
+- PE32 Intel i386
+- only KERNEL32.dll is statically imported
+- two clean builds verified byte-for-byte identical

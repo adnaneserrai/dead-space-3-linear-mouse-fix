@@ -1,0 +1,71 @@
+DS3 DirectInput + D820 + AB9830 Experimental Bypass v0.8 - code review
+============================================================================
+
+Scope
+-----
+- Based directly on the working v0.7 instrumentation.
+- deadspace3.exe on disk is never modified.
+- No Raw Input receiver is registered.
+- No WndProc is subclassed.
+- D820 behavior is not modified.
+- DirectInput data is not modified.
+- AB9830 vanilla is always called.
+
+Selective behavioral change
+---------------------------
+The only possible data write is restoring *x/*y to their pre-AB9830 float values AFTER
+vanilla AB9830 returns. This write requires every gate below:
+
+  camera parent return RVA == 0x0033F3ED
+  AB9830 direct return RVA == 0x006BC599
+  same-thread DirectInput GetDeviceState generation is new/unconsumed
+  latest DirectInput state is non-zero X or Y
+  DirectInput-to-AB9830 QPC age <= 5000 us
+  pre_x*pre_x + pre_y*pre_y > 1.0
+  INI EnableMouseAB9830Bypass == 1
+
+If pre magnitude <= 1, no X/Y write occurs after vanilla. Therefore the measured
+low-speed path remains the exact vanilla AB9830 result.
+
+Controller isolation
+--------------------
+The bypass requires a fresh non-zero sample from the specifically identified
+DirectInput GUID_SysMouse device on the SAME thread. A targeted camera call with no
+fresh mouse sample remains vanilla. This is an experimental validation, not a final
+multi-input policy: simultaneous mouse+controller input is intentionally outside the
+validation protocol and should not be used to infer final controller behavior.
+
+Fresh mouse gate
+----------------
+Every valid mouse GetDeviceState updates the latest sample for that thread, including
+zero samples. A targeted AB9830 call consumes a new sample once. This prevents a stale
+non-zero mouse delta from being reused by later camera calls. The fixed 5000 us window
+is deliberately generous relative to the v0.7 controlled capture: all 42 pre>1 samples
+had a same-thread non-zero DirectInput read about 0.64-0.88 ms earlier.
+
+Telemetry
+---------
+AB9830 v8 records preserve all three stages:
+  pre_x/pre_y
+  vanilla_post_x/vanilla_post_y
+  effective_post_x/effective_post_y
+plus the exact fresh DirectInput X/Y and gate flags. D820 remains logged unchanged.
+This allows the A/B capture to test a possible SECOND saturation inside D820 after the
+AB9830 normalization is selectively bypassed.
+
+Known limitation
+----------------
+This is not a final fix. Even with the strict mouse freshness gate, simultaneous use of
+mouse and controller in the same camera cycle is not independently decomposed by this
+probe. The experimental test should use mouse only. If D820 then clamps the restored
+vector, the next diagnostic must localize that second nonlinearity before any final fix.
+
+Build review
+------------
+- x86 PE32 DLL.
+- /W4 /WX clean.
+- /Brepro builds are byte-identical.
+- No CRT linked.
+- Static import table contains only KERNEL32.dll and the same seven bootstrap APIs as
+  v0.7; GetPrivateProfileIntA and the other helpers are resolved dynamically.
+- Binary log format: DS3DI80, version 80, 512-byte records.

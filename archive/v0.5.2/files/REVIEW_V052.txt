@@ -1,0 +1,19 @@
+DS3 Raw Mouse Probe v0.5.2 - initialization fix
+=================================================
+
+Root cause of v0.5.1 no-.bin failure:
+- v0.5.1 resolved KERNEL32 exports named Module32FirstA and Module32NextA.
+- Tool Help exposes the ANSI entry points as Module32First and Module32Next; the explicit suffixed variants are Module32FirstW / Module32NextW.
+- resolve_apis() treated the two unresolved pointers as mandatory, therefore initialization stopped before DS3_RawMouseProbe.bin was created.
+
+v0.5.2 changes:
+- resolves KERNEL32!Module32First and KERNEL32!Module32Next;
+- reports each missing required API to DS3_RawMouseProbe.status.txt as MISSING_API: ... before refusing;
+- keeps the v5.1 binary record format unchanged;
+- no Raw Input registration, no WndProc, no camera/mouse replacement;
+- RegisterRawInputDevices/GetRawInputData/GetRawInputBuffer observation and D820 diagnostic behavior otherwise unchanged.
+
+Build verification:
+- clang-cl x86 /W4 /WX /Brepro
+- two clean builds byte-for-byte identical
+- PE32 Intel i386

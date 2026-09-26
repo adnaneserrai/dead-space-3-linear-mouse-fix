@@ -1,0 +1,5 @@
+tail_starts=51 d820_unclamp_applied=106 tail_corrections=56 stable_exits=5 timeouts=0
+slow R: DI_sumX=3230 actual=160.832786526065 corrected=160.832786526065 corrected_per_count=0.049793432361 offline_cf=160.832788745416 applied=0 tail=0
+flick L: DI_sumX=-2686 actual=-66.214073530165 corrected=-133.257075342827 corrected_per_count=0.049611718296 offline_cf=-133.257074550353 applied=20 tail=9
+flick R: DI_sumX=3361 actual=62.052329778206 corrected=168.977412872616 corrected_per_count=0.050275933613 offline_cf=168.977412364772 applied=20 tail=6
+slow L: DI_sumX=-2955 actual=-146.816187030287 corrected=-146.816187030287 corrected_per_count=0.049683988843 offline_cf=-146.816188042112 applied=0 tail=0

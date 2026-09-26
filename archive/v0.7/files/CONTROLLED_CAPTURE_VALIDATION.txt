@@ -1,0 +1,54 @@
+Independent decode of the supplied controlled v0.6.1 capture
+============================================================
+
+Decoder result:
+  records=16497
+  trailing_bytes=0
+  GetDeviceState=7641
+  D820=3999
+  dropped=0
+  write_errors=0
+  CAPTURE_INTEGRITY=OK
+
+During the controlled movement period, the only active D820 caller was:
+  deadspace3.exe+0x0033F407 : 3999 records
+
+Four principal horizontal bursts independently segmented from non-zero
+GetDeviceState packets (gaps > 0.1 s), matching the user's controlled protocol:
+
+  slow R
+    duration ~= 5.548 s
+    DI sum X ~= +2642/+2643 counts (endpoint rounding dependent)
+    peak |X| = 6
+    D820 sum out_x ~= +131.591
+    output/count ~= 0.0498
+    |in_x| >= 0.95: 0 / 915
+
+  flick L
+    duration ~= 0.339 s
+    DI sum X ~= -2786/-2785 counts
+    peak |X| = 298
+    D820 sum out_x ~= -37.194
+    output/count ~= 0.01335
+    |in_x| >= 0.95: 11 / 56
+
+  flick R
+    duration ~= 0.285 s
+    DI sum X ~= +3509/+3508 counts
+    peak |X| = 301
+    D820 sum out_x ~= +52.813
+    output/count ~= 0.01505
+    |in_x| >= 0.95: 14 / 47
+
+  slow L
+    duration ~= 4.163 s
+    DI sum X ~= -2902/-2903 counts
+    peak |X| = 9
+    D820 sum out_x ~= -144.536
+    output/count ~= 0.04981
+    |in_x| >= 0.95: 0 / 687
+
+The left pair is close in total DirectInput counts while D820 gain/count is much
+lower for the flick. This establishes the speed-dependent loss somewhere before
+or inside the D820 input path, but v0.7 is still required to directly measure the
+suspected AB9830 radial clamp before any fix is designed.

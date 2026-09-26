@@ -1,0 +1,23 @@
+DS3 Raw Mouse Probe v0.5.1
+qpc_frequency=10000000 timestamp=0x511E9327 image_size=0x012D4000
+records=5467 types=module:97, d820:4332, stats:1036, meta:1, iat:1
+modules_mapped=97
+
+IAT observer:
+  nvspcap.dll: Register=1 GetRawInputData=1 GetRawInputBuffer=0 conflicts=0
+
+RegisterRawInputDevices calls=0
+
+GetRawInputData actual RID_INPUT records=0 valid_mouse=0
+
+GetRawInputBuffer calls=0 actual_calls=0 returned_packets=0 parsed_mouse=0 parse_errors=0
+GAME_RAW_INPUT_CONFIRMED=NO
+
+D820 records=4332
+  caller=deadspace3.exe+0x0033F407 records=2168 max_abs_in=0.466322035 max_abs_out=2.68199253
+  caller=deadspace3.exe+0x00149F2E records=2164 max_abs_in=1 max_abs_out=2.77495742
+
+Latest logger stats: enqueued=4431 dropped=0 dropped_api=0 dropped_d820=0 highwater=50 write_errors=0 reg_calls=0 getraw_calls=0 getraw_query=0 getraw_actual=0 raw_packets=0 raw_nonzero=0 raw_errors=0 d820=4332 modules=97 iat_reg=1 iat_raw=1 iat_buffer=0 iat_conflicts=0 getbuffer_calls=0 getbuffer_query=0 getbuffer_actual=0 buffer_packets=0 buffer_nonzero=0 buffer_parse_errors=0
+CAPTURE_INTEGRITY=OK
+
+CSV prefix: /mnt/data/DS3_RawMouseProbe(1)_*.csv
