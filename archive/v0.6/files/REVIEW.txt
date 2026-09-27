@@ -1,0 +1,58 @@
+DS3 DirectInput + D820 Probe v0.6 - review
+==========================================
+
+Validated design points
+-----------------------
+1. D820 path is unchanged from the prior verified diagnostic architecture:
+   - runtime signature scan
+   - PE timestamp/image-size fingerprint
+   - exact nine direct call-return RVAs
+   - verified prologue before detour
+   - vanilla function called with original arguments and values
+
+2. DirectInput interception:
+   - patches only deadspace3.exe's static DINPUT8.dll!DirectInput8Create IAT slot
+   - chains through whatever target was already in that IAT slot (including a proxy loader)
+   - shadows the returned IDirectInput8 vtable and replaces only CreateDevice
+   - wraps an IDirectInputDevice8 only when CreateDevice receives GUID_SysMouse,
+     GUID_SysMouseEm, or GUID_SysMouseEm2
+   - mouse wrapper shadows only Acquire, Unacquire, GetDeviceState, GetDeviceData,
+     SetDataFormat, and SetCooperativeLevel
+   - original methods receive exactly the game's original arguments
+
+3. Mouse data format:
+   - DIDATAFORMAT/DIOBJECTDATAFORMAT x86 sizes are static_asserted
+   - X/Y/Z object offsets are discovered from GUID_XAxis/GUID_YAxis/GUID_ZAxis
+   - DIMOUSESTATE (16 bytes) and DIMOUSESTATE2 (20 bytes) are identified explicitly
+   - custom mouse formats are only decoded when X and Y axis offsets are proven from SetDataFormat
+
+4. Logging:
+   - producer hooks enqueue fixed 512-byte records only
+   - no hook writes status or binary data to disk
+   - writer thread flushes blocks
+   - dropped records and write errors are counted
+   - DIRECTINPUT_MOUSE_CONFIRMED is emitted by the writer only after a persisted
+     non-zero X/Y event from GetDeviceState or GetDeviceData has been observed
+
+5. Raw Input registration:
+   - probe never calls RegisterRawInputDevices
+   - passive GetRegisteredRawInputDevices polling runs on a monitor thread
+   - registration snapshots are logged only when changed
+
+6. Build:
+   - PE32 i386 DLL/ASI
+   - /W4 /WX clean
+   - /Brepro
+   - two clean builds byte-identical
+   - static imports limited to seven KERNEL32 functions
+
+Known limitations
+-----------------
+- A mouse device is wrapped only when CreateDevice uses one of the predefined system-mouse GUIDs.
+  If DS3 creates a physical/enumerated mouse by an instance GUID instead, the capture will show
+  CreateDevice calls and GUIDs but no mouse wrapper; a follow-up can identify that device without guessing.
+- QueryInterface on the returned DirectInput objects is not wrapped. If DS3 immediately switches to a
+  different interface pointer through QueryInterface, the capture may stop at that boundary.
+- The probe measures DirectInput deltas -> D820 input/output. It still does not measure final camera yaw/pitch.
+- Passive Raw Input polling reports process registration state; it does not identify ownership because it
+  intentionally does not hook RegisterRawInputDevices in this version.

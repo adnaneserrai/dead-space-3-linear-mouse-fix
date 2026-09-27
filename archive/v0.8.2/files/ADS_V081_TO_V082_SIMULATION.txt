@@ -1,0 +1,25 @@
+DS3 Linear Mouse Fix v0.8.2 - offline ADS replay on v0.8.1 capture
+=================================================================
+
+The old v0.8.1 ADS capture did not record ADS AB9830 pre-values because the
+v0.8.1 path gate recognized only the HIP parent return. Therefore this replay
+validates the ADS D820 side exactly, but cannot claim an exact historical count
+of ADS AB9830 bypass events from that old file.
+
+ADS D820 caller replay: deadspace3.exe+0x00149F2E
+
+slow R   DI sumX=+1828  actual/count=0.068220019  unclamped/count=0.068220020  clamp_samples= 0  max|preclamp_x|=0.384652
+flick L  DI sumX=-2258  actual/count=0.027332172  unclamped/count=0.068085860  clamp_samples=20  max|preclamp_x|=8.717276
+flick R  DI sumX=+2979  actual/count=0.023288549  unclamped/count=0.068385189  clamp_samples=23  max|preclamp_x|=11.449167
+slow L   DI sumX=-2959  actual/count=0.068542222  unclamped/count=0.068542222  clamp_samples= 0  max|preclamp_x|=0.467233
+
+Result:
+- slow movements are unchanged because there are no D820 clamp samples;
+- flick L has 20 D820 clamp samples and replays to ~0.068086/count without the clamp;
+- flick R has 23 D820 clamp samples and replays to ~0.068385/count without the clamp;
+- slow L remains ~0.068542/count.
+
+This reproduces the independently reported ADS counterfactual closely and
+supports extending the already-validated post-vanilla D820 unclamp to the ADS
+caller, provided the runtime mouse-tail latch is started only by the new ADS
+AB9830 fresh-mouse bypass gate.

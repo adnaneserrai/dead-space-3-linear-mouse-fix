@@ -1,0 +1,20 @@
+DS3 DirectInput + D820 + AB9830 Probe v0.7 - exact reproducible build
+====================================================================
+
+Toolchain used:
+  clang-cl 17.0.0
+  lld-link 17.0.0
+  target: i686-pc-windows-msvc
+
+Required in the same directory:
+  ds3_directinput_probe_v07.cpp
+  kernel32.lib
+
+Compile (warnings are errors):
+clang-cl --target=i686-pc-windows-msvc /nologo /c /O2 /Brepro /GS- /Gs9999999 /GR- /EHs-c- /Zl /W4 /WX ds3_directinput_probe_v07.cpp /Fods3_directinput_probe_v07.obj
+
+Link:
+lld-link /nologo /dll /Brepro /entry:DllMain@12 /subsystem:windows /nodefaultlib /machine:x86 ds3_directinput_probe_v07.obj kernel32.lib /out:DS3_DirectInputProbe.asi /alternatename:__imp__CloseHandle@4=__imp__CloseHandle /alternatename:__imp__CreateFileA@28=__imp__CreateFileA /alternatename:__imp__CreateThread@24=__imp__CreateThread /alternatename:__imp__DisableThreadLibraryCalls@4=__imp__DisableThreadLibraryCalls /alternatename:__imp__GetModuleFileNameA@12=__imp__GetModuleFileNameA /alternatename:__imp__GetModuleHandleA@4=__imp__GetModuleHandleA /alternatename:__imp__WriteFile@20=__imp__WriteFile
+
+Reproducibility requirement:
+  Build twice from clean directories and verify byte-for-byte identity plus identical SHA-256.

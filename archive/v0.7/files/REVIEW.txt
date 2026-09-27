@@ -1,0 +1,91 @@
+DS3 DirectInput + D820 + AB9830 Probe v0.7 - review
+==================================================
+
+Purpose
+-------
+Measure the final suspected radial clamp dynamically without changing any input.
+
+Target chain verified against the exact DS3 executable
+------------------------------------------------------
+Camera path:
+  VA 0x0073F3E8 calls VA 0x00ABC510
+  return RVA = 0x0033F3ED
+  VA 0x0073F402 calls D820 (VA 0x0040D820)
+  return RVA = 0x0033F407
+
+Inside ABC510:
+  VA 0x00ABC594 calls VA 0x00AB9830
+  return RVA = 0x006BC599
+
+Runtime signatures
+------------------
+ABC510 signature is scanned in runtime .text and must match exactly once.
+AB9830 signature is scanned in runtime .text and must match exactly once.
+D820 retains the existing runtime signature/callsite/prologue validation.
+
+Before installing the new hooks, v0.7 verifies both relative CALL targets:
+  deadspace3.exe+0x0033F3E8 -> runtime ABC510 target
+  deadspace3.exe+0x006BC594 -> runtime AB9830 target
+
+Hook safety
+-----------
+ABC510 path-gate detour overwrites 6 whole bytes:
+  55 8B EC 53 8B D9
+These are complete instructions and are byte-verified first.
+
+AB9830 diagnostic detour overwrites 6 whole bytes:
+  55 8B EC D9 45 10
+These are complete instructions and are byte-verified first.
+
+ABI review:
+- ABC510 ends with ret 0x24; the hook preserves nine 32-bit stack arguments.
+- AB9830 ends with ret 0x10; the hook preserves four 32-bit stack arguments
+  (float* X, float* Y, float curve0, float curve1) and ECX=self.
+- D820 hook is unchanged from v0.6.1.
+
+Path filtering
+--------------
+ABC510 itself is not logged for every use. It only opens a per-thread gate when
+its immediate return address is deadspace3.exe RVA 0x0033F3ED.
+
+AB9830 is called normally for every invocation. A diagnostic record is emitted
+ONLY when:
+  - the same thread has the camera-path ABC510 gate active, and
+  - AB9830's direct return address is RVA 0x006BC599.
+
+This avoids treating global AB9830 traffic as mouse-look evidence.
+
+Recorded targeted AB9830 fields
+--------------------------------
+- QPC begin/end, thread, caller module/RVA
+- self, X pointer, Y pointer
+- direct AB9830 return RVA
+- parent camera-path return RVA
+- target D820 return RVA
+- curve arguments
+- pre X/Y
+- post X/Y
+
+The decoder derives pre/post magnitude with hypot() offline. This is intentional:
+it avoids adding sqrt/FPU work to the game-thread hook whose timing/input behavior
+we are measuring.
+
+No value modification
+---------------------
+The AB9830 hook reads X/Y, calls the exact original function with the same self,
+pointers and float arguments, then reads X/Y afterward. It never writes X/Y.
+The ABC510 gate calls the original with the exact raw 32-bit arguments and returns
+its original EAX value. DirectInput and D820 behavior remain unchanged.
+
+Known limitations
+-----------------
+1. This proves only the selected camera path. It intentionally ignores AB9830
+   invocations from other callers/modes.
+2. The path gate depends on the verified exact return RVAs for this executable;
+   signature/call-target checks refuse the observer if they do not match.
+3. The probe still does not measure final camera yaw/pitch. It measures:
+     DirectInput -> AB9830 pre/post -> D820 input/output.
+4. Pre/post magnitudes are derived offline from the logged X/Y values rather than
+   computed in the game thread.
+5. If a future build changes the call graph while preserving some signatures, the
+   explicit rel32 call-target checks are intended to refuse rather than guess.

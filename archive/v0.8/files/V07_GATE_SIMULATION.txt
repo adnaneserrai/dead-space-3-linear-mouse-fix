@@ -1,0 +1,21 @@
+v0.8 fresh-mouse gate simulation against the supplied controlled v0.7 capture
+=============================================================================
+
+Input capture decoded with decode_ds3_directinput_probe_v07.py:
+  records = 19564
+  GetDeviceState = 8300
+  AB9830 targeted = 4214
+  D820 = 4214
+  drops = 0
+  write_errors = 0
+  pre_magnitude > 1 = 42
+
+Simulating the v0.8 gate against the real QPC/thread data:
+  pre_magnitude > 1 samples                         = 42
+  with latest same-thread valid non-zero DI sample = 42 / 42
+  with DI age <= 5 ms                              = 42 / 42
+  observed age range for those 42                  = 0.6378 .. 0.8796 ms
+
+The simulation also consumes each DirectInput generation once, matching the v0.8
+one-shot freshness rule. Samples below the radial limit can also have fresh mouse data,
+but are never restored because pre_magnitude > 1 is mandatory.

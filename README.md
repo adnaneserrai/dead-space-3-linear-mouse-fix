@@ -216,3 +216,9 @@ See `LICENSE` for details.
 This is an unofficial community modification and is not affiliated with or endorsed by Electronic Arts or Visceral Games.
 
 Use it at your own risk.
+
+## Development Archive
+
+Older experimental and investigation builds are preserved in the [development archive](./archive).
+
+These builds are provided for historical and technical reference only. For normal gameplay, use v1.0.

@@ -1,0 +1,46 @@
+DS3_RawMouseProbe v0.5.1 review
+===============================
+
+ABI / RAWINPUT correction
+-------------------------
+The v0.5 artificial union reserve could make sizeof(RAWINPUT_X) 48 and reject a valid 40-byte x86 mouse packet.
+v0.5.1 removes that dependency. The source now asserts:
+- sizeof(void*) == 4
+- sizeof(RAWINPUTHEADER_X) == 16
+- sizeof(RAWMOUSE_X) == 24
+- RAWMOUSE lLastX offset == 12 and lLastY offset == 16
+- sizeof(RAWINPUT_MOUSE_X) == 40
+- RAWINPUT_MOUSE_X.mouse begins at offset 16
+
+GetRawInputData validates only the header first, then requires exactly the minimum bytes needed to read RAWMOUSE (40 bytes) for a mouse packet.
+
+GetRawInputBuffer
+-----------------
+Observed non-destructively in parallel with GetRawInputData.
+- pData == NULL calls are counted but never treated as movement.
+- actual calls are logged with caller module/RVA, thread, sizes, returned record count, LastError and parse diagnostics.
+- mouse packets produce separate buffered records with hDevice, flags, dx/dy and packet index.
+- use of the API is visible even if packet parsing fails (RAW_BUFFER_USED / decoder call count).
+- when IsWow64Process reports WOW64, parser uses Microsoft-documented 8-byte block alignment and mouse payload offset 24; otherwise x86 native layout uses alignment 4 / payload offset 16.
+- caller buffers and arguments are never modified.
+
+Observer behavior
+-----------------
+The probe itself never calls RegisterRawInputDevices to register a device. The only call through pCallRegisterRawInputDevices occurs inside the detour, forwarding the caller's original arguments/result.
+No window or WndProc is created/subclassed.
+RegisterRawInputDevices, GetRawInputData and GetRawInputBuffer are observed by safe x86 hotpatch when available, otherwise by periodic IAT patching. Existing non-probe IAT hooks are not overwritten and are counted as conflicts.
+
+Timing / logging
+----------------
+Producer paths enqueue fixed 384-byte records in memory. Disk writes are done by the writer thread. Drop/write-error counters remain in STATS.
+The observer saves incoming LastError before pre-call inspection, restores it immediately before the real USER32 call, captures the API's resulting LastError, and restores that for the original caller after logging.
+
+D820
+----
+The existing signature/callsite/prologue-verified D820 observer remains unchanged in semantics: it records values before/after the vanilla function and never replaces them.
+
+Known limitations
+-----------------
+1. If a USER32 function cannot be safely hotpatched and a component calls a cached dynamically-resolved function pointer that is not represented by a patched IAT slot, that call can still evade observation. The status/IAT diagnostics expose this condition rather than treating silence as proof of no Raw Input.
+2. GetRawInputBuffer WOW64 has special documented layout rules. v0.5.1 follows them, but any parse error is explicitly counted; API use itself remains observable even if a packet cannot be decoded.
+3. This remains diagnostic only: Raw Input -> D820 is observed, not final camera yaw/pitch.
