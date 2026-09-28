@@ -1,224 +1,153 @@
-# Dead Space 3 Linear Mouse Fix
+# Dead Space 3 Linear Mouse Fix v1.1
 
-A lightweight ASI plugin that fixes Dead Space 3's severe negative mouse acceleration and high-speed input compression.
-
-The fix works in both:
-
-- Normal camera movement (HIP)
-- Right Mouse Button aiming (ADS/RMB)
-
-Fast mouse movements now produce nearly the same rotation per mouse count as slow movements, instead of being heavily compressed by the game.
+Lightweight ASI plugin for Dead Space 3 that removes the game's high-speed mouse input compression in normal camera movement (HIP) and ADS/RMB aiming while preserving low-speed sensitivity.
 
 ## Features
 
-- Fixes severe negative mouse acceleration
-- Fixes high-speed mouse input compression
-- Supports normal camera movement (HIP)
-- Supports ADS / RMB aiming
-- Preserves low-speed mouse sensitivity
-- Leaves unrelated controller input paths untouched
-- Does not modify `deadspace3.exe` on disk
-- Validates the expected game code before activating
-- Can be disabled through the INI file
-- Lightweight final build with diagnostic logging removed
+- Fixes high-speed mouse input compression in HIP and ADS/RMB.
+- Preserves the game's low-speed mouse sensitivity.
+- Leaves unrelated controller camera processing on the original game path.
+- Does not modify `deadspace3.exe` on disk.
+- Waits for and validates the protected retail game code before enabling the correction.
+- Fails safely and leaves the correction inactive when the expected retail code cannot be validated.
+- Writes one small status file next to `deadspace3.exe` for startup verification.
+
+## Supported game
+
+This release is for the official 32-bit (x86) Dead Space 3 retail executable distributed through EA App and Steam.
+
+### Reference retail build
+
+The retail executable used for compatibility validation has this identification data:
+
+- Reference SHA-256: `BAA971A30B4D5B1F7BA132F29EE4DD8B51FC02371284C629D8D26EB850B62FEC`
+- PE timestamp: `0x511E9327`
+- `SizeOfImage`: `0x012D6000`
+- Entry point RVA: `0x012D4830`
+
+**Important:** the plugin does **not** calculate the executable SHA-256 at runtime. The SHA-256 above is a reference checksum for identifying the validated retail build. At runtime the plugin instead requires the expected x86 PE layout, retail DirectInput import structure, deprotected runtime signatures, and the verified HIP/ADS call relationships to be present before activation.
+
+Do not use or distribute a modified/cracked `deadspace3.exe` with this release. The game executable itself is never included in this package.
 
 ## Requirements
 
-- Dead Space 3 for Windows
-- A compatible ASI loader, such as Ultimate ASI Loader
+- Dead Space 3 for Windows, official retail Steam or EA App build.
+- A compatible 32-bit ASI loader.
+
+### Recommended loader: Ultimate ASI Loader
+
+This release **does not include** an ASI loader.
+
+Use the official Win32 `winmm.dll` build from the [Ultimate ASI Loader project](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases).
+
+For the recommended setup, use the loader's `winmm.dll` file directly. You do not need to rename a `dinput8.dll` to `winmm.dll` for this setup.
+
+Ultimate ASI Loader supports loading ASI files from the game root and from `scripts`, `plugins`, or `update`. See the loader's official documentation if you choose another supported proxy-DLL variant.
 
 ## Installation
 
-1. Install a compatible ASI loader in the Dead Space 3 game directory.
-2. Copy these files next to `deadspace3.exe`:
+Recommended layout:
 
-   - `DS3_LinearMouseFix.asi`
-   - `DS3_LinearMouseFix.ini`
+```text
+deadspace3.exe
+winmm.dll
+winmm.ini                 (optional loader configuration)
+DS3_LinearMouseFix.ini
+plugins\
+    DS3_LinearMouseFix.asi
+```
 
-3. Launch the game.
+1. Install the official Win32 `winmm.dll` build of Ultimate ASI Loader next to `deadspace3.exe`.
+2. Put `DS3_LinearMouseFix.asi` in `plugins\`.
+3. Put `DS3_LinearMouseFix.ini` in the same directory as `deadspace3.exe`.
+4. Launch the game normally.
 
-The fix is enabled by default.
+The ASI can also be placed directly beside `deadspace3.exe` when the selected ASI loader supports loading plugins from the game root.
+
+Do not replace, patch, or modify `deadspace3.exe`.
 
 ## Configuration
+
+`DS3_LinearMouseFix.ini`:
 
 ```ini
 [Mouse]
 EnableLinearMouseFix=1
 ```
 
-Available values:
+- `1` = correction enabled.
+- `0` = correction disabled; no game hooks are installed.
 
-- `1` — enable the validated HIP + ADS mouse correction
-- `0` — disable the fix completely; no hooks are installed
+The release configuration is enabled by default.
 
-## Supported Game Version
+## How it works
 
-The plugin targets the 32-bit (`x86`) Dead Space 3 executable.
+Dead Space 3 applies two separate limits to mouse camera input.
 
-Validated executable information:
+First, a camera-input stage limits the magnitude of large mouse vectors. The plugin calls the original stage first and, only on the verified HIP or ADS/RMB mouse-look path with a fresh DirectInput mouse sample on the same thread, restores the original mouse vector when it exceeded the game's magnitude limit.
 
-- PE timestamp: `0x511E9327`
-- Accepted image size: `0x012D4000` or `0x012D6000`
-- Tested executable SHA-256:
+Second, the camera processor applies a per-axis limit after its internal history/interpolation stage. The plugin calls the original processor first so that the game's internal history and state are updated normally. It then reconstructs the validated pre-limit result and replaces only output that the original per-axis limit would have clipped.
+
+Values that remain within the original limits are left unchanged.
+
+## Controller behavior
+
+Controller-only camera processing remains on the game's original path. The mouse correction requires a fresh non-zero DirectInput mouse sample associated with the same thread and verified mouse-look profile before it can affect a camera call.
+
+Simultaneous physical mouse and controller input is an edge case and has not been exhaustively characterized.
+
+## Frame-rate and RTSS notes
+
+- Very high frame rates can cause undesirable mouse behavior in Dead Space 3 independently of this fix.
+- 120 FPS has been tested successfully with the fix.
+- RivaTuner Statistics Server (RTSS) can interfere with ASI loading during game startup. When using RTSS, launch the game first and enable RTSS afterwards, or use a driver-level frame-rate limiter.
+
+## Status file / troubleshooting
+
+After launch, the plugin creates:
 
 ```text
-dcc26a3d0afc1af232cb8e6d8c9192ff0de9a43ab51990be6756dd2993a63ba2
+DS3_LinearMouseFix.status.txt
 ```
 
-The plugin also verifies runtime signatures and the expected HIP/ADS call relationships before enabling the fix.
-
-If the expected game code cannot be verified, the correction is not activated.
-
-## How It Works
-
-Dead Space 3 applies two separate forms of high-speed input limiting to mouse camera movement.
-
-### 1. Radial input clamp
-
-Before the camera input processor, the game applies a radial magnitude clamp that limits large mouse input vectors.
-
-The plugin preserves the original game function and only restores the unclamped mouse vector when:
-
-- the call belongs to a verified HIP or ADS camera path;
-- a fresh, non-zero DirectInput mouse delta was received;
-- the mouse sample is on the same thread;
-- the sample has not already been consumed;
-- the input magnitude exceeds the game's original limit.
-
-Normal low-speed mouse input is left unchanged.
-
-### 2. D820 per-axis clamp
-
-The game's camera input processor applies another clamp after its internal history/interpolation stage.
-
-The original function is always executed first so that all internal game state and history updates remain untouched.
-
-The plugin then reconstructs the validated post-processing result and only replaces the returned camera movement when the original per-axis limit would have clipped the mouse input.
-
-Below the limit, the original game output is preserved.
-
-## Camera Profiles
-
-Only the two verified mouse-look paths are corrected.
-
-### HIP / Normal Camera
+A normal successful initialization looks like:
 
 ```text
-ABC510 parent return = 0x0033F3ED
-D820 return          = 0x0033F407
-```
-
-### ADS / RMB Aiming
-
-```text
-ABC510 parent return = 0x00149F17
-D820 return          = 0x00149F2E
-```
-
-Internal AB9830 return:
-
-```text
-0x006BC599
-```
-
-Other D820 callers remain untouched.
-
-## Mouse Tail Handling
-
-Fast mouse movement can remain above the game's internal clamp for a few frames because Dead Space 3 keeps a short input history.
-
-The fix therefore keeps a mouse-specific latch active briefly after a validated high-speed mouse input.
-
-Validated constants:
-
-```text
-Fresh mouse window:      5000 us
-Tail safety timeout:   250000 us
-Stable exit threshold:       3 samples
-```
-
-The latch is profile-specific:
-
-```text
-HIP mouse input -> HIP D820 path only
-ADS mouse input -> ADS D820 path only
-```
-
-A HIP latch cannot modify ADS processing, and an ADS latch cannot modify HIP processing.
-
-## Controller Behavior
-
-Controller-only camera input does not open the mouse-specific correction latch and remains on the game's original processing path.
-
-Simultaneous physical mouse movement and controller input has not been extensively tested and should be considered an edge case.
-
-## Final Build
-
-The final v1.0 release is derived directly from the validated v0.8.2 experimental implementation without changing the correction algorithm.
-
-The final build removes development-only diagnostics, including:
-
-- binary telemetry logging
-- `DS3_LinearMouseFix.bin`
-- writer thread and double buffering
-- Raw Input registration monitoring
-- periodic module monitoring
-- per-frame diagnostic counters
-- observation-only DirectInput hooks
-
-Only the hooks required for the actual fix remain.
-
-A small `DS3_LinearMouseFix.status.txt` file is written at startup so that activation can be verified.
-
-A successful startup should contain:
-
-```text
+Dead Space 3 Linear Mouse Fix v1.1
+STATUS: initializing
 CONFIG EnableLinearMouseFix=1
-ACTIVE: validated HIP + ADS linear mouse correction enabled.
+BUILD: official retail EA/Steam x86 layout recognized
+STATUS: waiting for runtime code initialization
+STATUS: ACTIVE
+PROFILE: HIP + ADS/RMB
 ```
 
-## Release Integrity
+A refusal means the correction was not activated. Leave the game executable untouched and check that:
 
-### `DS3_LinearMouseFix.asi` v1.0
+- the game is the official retail Steam/EA App build;
+- its identification data matches the supported retail reference above;
+- the selected ASI loader is installed correctly;
+- only one copy of the plugin is being loaded;
+- RTSS or another startup overlay is not interfering with loader startup.
 
-SHA-256:
+The reference SHA-256 is an identification check for the validated retail build; it is not computed by the plugin at runtime.
 
-```text
-348d9781292a7f49a53788a38ef765481e6348767b137efeff3ca5d93a73885e
-```
+## Release contents
 
-### Source code
+The release archive contains only the plugin, configuration, documentation, source, build command, license, changelog, and portable checksums.
 
-SHA-256:
+It does not contain:
 
-```text
-ffd45873e2cc70bfa51e316de13e717ac6c7419b99418166165da60fe096ef43
-```
-
-## Building
-
-The exact reproducible build command used for the release is included in:
-
-```text
-BUILD_COMMAND.txt
-```
-
-The release was built with reproducible build settings and two clean builds produced bit-identical binaries.
+- `deadspace3.exe`
+- a modified/cracked game executable
+- an ASI loader binary
+- log or capture files
+- old build artifacts
 
 ## License
 
-This project is licensed under the MIT License.
-
-See `LICENSE` for details.
+This project is released under the MIT License. See `LICENSE`.
 
 ## Disclaimer
 
-This is an unofficial community modification and is not affiliated with or endorsed by Electronic Arts or Visceral Games.
-
-Use it at your own risk.
-
-## Development Archive
-
-Older experimental and investigation builds are preserved in the [development archive](./archive).
-
-These builds are provided for historical and technical reference only. For normal gameplay, use v1.0.
+Dead Space 3 and its related trademarks are property of their respective owners. This project is an unofficial community modification and is not affiliated with or endorsed by Electronic Arts or Visceral Games.

@@ -1,20 +1,19 @@
-Dead Space 3 Linear Mouse Fix v1.0 - exact reproducible build
-=============================================================
+Dead Space 3 Linear Mouse Fix v1.1
+Reproducible 32-bit build
 
-Toolchain used:
-  clang-cl 17.0.0
-  lld-link 17.0.0
+Toolchain:
+  clang-cl 17.x
+  lld-link 17.x
   target: i686-pc-windows-msvc
 
-Required in the same directory:
-  ds3_linear_mouse_fix_final.cpp
-  kernel32.lib
-
 Compile:
-clang-cl --target=i686-pc-windows-msvc /nologo /c /O2 /Brepro /GS- /Gs9999999 /GR- /EHs-c- /Zl /W4 /WX ds3_linear_mouse_fix_final.cpp /Fods3_linear_mouse_fix_final.obj
+clang-cl --target=i686-pc-windows-msvc /nologo /c /O2 /Brepro /GS- /Gs9999999 /GR- /EHs-c- /Zl /W4 /WX ds3_linear_mouse_fix_v11.cpp /Fods3_linear_mouse_fix_v11.obj
 
 Link:
-lld-link /nologo /dll /Brepro /entry:DllMain@12 /subsystem:windows /nodefaultlib /machine:x86 ds3_linear_mouse_fix_final.obj kernel32.lib /out:DS3_LinearMouseFix.asi /alternatename:__imp__CloseHandle@4=__imp__CloseHandle /alternatename:__imp__CreateFileA@28=__imp__CreateFileA /alternatename:__imp__CreateThread@24=__imp__CreateThread /alternatename:__imp__DisableThreadLibraryCalls@4=__imp__DisableThreadLibraryCalls /alternatename:__imp__GetModuleFileNameA@12=__imp__GetModuleFileNameA /alternatename:__imp__GetModuleHandleA@4=__imp__GetModuleHandleA /alternatename:__imp__WriteFile@20=__imp__WriteFile
+lld-link /nologo /dll /Brepro /entry:DllMain@12 /subsystem:windows /nodefaultlib /machine:x86 ds3_linear_mouse_fix_v11.obj kernel32.lib /out:DS3_LinearMouseFix.asi /alternatename:__imp__CloseHandle@4=__imp__CloseHandle /alternatename:__imp__CreateFileA@28=__imp__CreateFileA /alternatename:__imp__CreateThread@24=__imp__CreateThread /alternatename:__imp__DisableThreadLibraryCalls@4=__imp__DisableThreadLibraryCalls /alternatename:__imp__GetModuleFileNameA@12=__imp__GetModuleFileNameA /alternatename:__imp__GetModuleHandleA@4=__imp__GetModuleHandleA /alternatename:__imp__WriteFile@20=__imp__WriteFile
 
-Reproducibility check:
-  two clean-directory builds were byte-for-byte identical.
+Requirements:
+  - a 32-bit Windows target
+  - kernel32.lib available to the linker
+
+Release builds use /Brepro. Two clean builds from this exact source produce bit-identical DS3_LinearMouseFix.asi files.

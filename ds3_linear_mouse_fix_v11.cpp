@@ -1,18 +1,21 @@
-// Dead Space 3 Linear Mouse Fix v1.0
-// Exact target: x86 deadspace3.exe timestamp 0x511E9327, image size 0x012D4000/0x012D6000.
+// Dead Space 3 Linear Mouse Fix v1.1
+// Primary target: official retail EA App / Steam x86 deadspace3.exe
+// Reference retail build SHA-256 (identification reference only; not computed at runtime):
+// BAA971A30B4D5B1F7BA132F29EE4DD8B51FC02371284C629D8D26EB850B62FEC.
+// The official retail file is protected on disk: game .text is revealed at runtime and the
+// original DINPUT8 import descriptor remains latent outside the PE header's active import directory.
 //
-// Final lightweight build derived from the validated v0.8.2 HIP + ADS experiment.
-// No binary logger, no Raw Input monitoring, no WndProc work, no DPI/sensitivity
-// compensation. The functional algorithm is unchanged:
+// Correction mathematics are unchanged from the validated v1.0 implementation. Retail runtime
+// detection and bounded initialization retry are retained. No Raw Input receiver, WndProc work,
+// DPI or sensitivity compensation is used.
 //   1) identify the DirectInput system mouse and publish same-thread GetDeviceState X/Y;
-//   2) on only the two verified mouse-look ABC510 paths (HIP/ADS), call AB9830 vanilla;
-//      if a fresh non-zero mouse sample exists and pre magnitude > 1, restore pre X/Y;
-//   3) on only the matching D820 caller, call D820 vanilla first, reconstruct the exact
-//      validated post-state model, and while the same-profile mouse-tail latch is active,
-//      replace only a truly clamped output with preclamp * scale.
+//   2) on only the verified HIP/ADS mouse-look paths, call AB9830 vanilla and restore a fresh
+//      mouse vector only when its original magnitude exceeds the validated radial limit;
+//   3) on only the matching HIP/ADS D820 caller, call D820 vanilla first, reconstruct the
+//      validated post-state model, and replace only a truly clamped mouse output.
 //
-// Controller/other D820 callers are never corrected. Below the AB magnitude-1 clamp and
-// below the D820 per-axis limit, the vanilla outputs are left untouched.
+// Controller/other D820 callers are never corrected. Below the validated limits, vanilla output
+// is left untouched.
 
 // -----------------------------------------------------------------------------
 // Minimal Win32 / COM / DirectInput declarations (no CRT)
@@ -58,7 +61,10 @@ extern "C" void* memset(void* dst,int value,SIZE_T n){
 #define FILE_ATTRIBUTE_NORMAL 0x00000080UL
 #define INVALID_HANDLE_VALUE ((HANDLE)(ULONG_PTR)0xFFFFFFFFUL)
 #define PAGE_READWRITE 0x04UL
+#define PAGE_EXECUTE 0x10UL
+#define PAGE_EXECUTE_READ 0x20UL
 #define PAGE_EXECUTE_READWRITE 0x40UL
+#define PAGE_EXECUTE_WRITECOPY 0x80UL
 #define PAGE_NOACCESS 0x01UL
 #define PAGE_GUARD 0x100UL
 #define MEM_COMMIT 0x1000UL
@@ -183,11 +189,26 @@ static const UINT32 kTailTimeoutUs=250000;
 static const UINT32 kTailStableSamples=3;
 
 enum MouseLookProfile { PROFILE_NONE=0, PROFILE_HIP=1, PROFILE_ADS=2 };
-static const UINT32 kHipABC510ReturnRva=0x0033F3EDU;
-static const UINT32 kHipD820ReturnRva=0x0033F407U;
-static const UINT32 kAdsABC510ReturnRva=0x00149F17U;
-static const UINT32 kAdsD820ReturnRva=0x00149F2EU;
-static const UINT32 kTargetAB9830ReturnRva=0x006BC599U;
+
+// Known v1.0 reference RVAs. The retail build validates runtime instructions and call links
+// before using these references; structural discovery can populate the runtime globals when needed.
+static const UINT32 kRefD820Rva=0x0000D820U;
+static const UINT32 kRefABC510Rva=0x006BC510U;
+static const UINT32 kRefAB9830Rva=0x006B9830U;
+static const UINT32 kRefHipABC510ReturnRva=0x0033F3EDU;
+static const UINT32 kRefHipD820ReturnRva=0x0033F407U;
+static const UINT32 kRefAdsABC510ReturnRva=0x00149F17U;
+static const UINT32 kRefAdsD820ReturnRva=0x00149F2EU;
+static const UINT32 kRefAB9830ReturnRva=0x006BC599U;
+
+static volatile UINT32 g_hip_abc_return_rva=0;
+static volatile UINT32 g_hip_d820_return_rva=0;
+static volatile UINT32 g_ads_abc_return_rva=0;
+static volatile UINT32 g_ads_d820_return_rva=0;
+static volatile UINT32 g_ab9830_return_rva=0;
+
+static const DWORD kInitPollMs=25;
+static const DWORD kInitTimeoutMs=120000;
 
 struct StateSnapshot {
     UINT32 bits_04,bits_08,bits_0c,bits_10,bits_14,bits_18,bits_1c,bits_20,bits_24,bits_28,bits_2c;
@@ -243,8 +264,6 @@ static volatile LONG g_module_count=0;
 // -----------------------------------------------------------------------------
 static DWORD cstrlen(const char* s){DWORD n=0;while(s&&s[n])++n;return n;}
 static BOOL streq(const char* a,const char* b){if(!a||!b)return FALSE;while(*a&&*b){if(*a!=*b)return FALSE;++a;++b;}return *a==*b;}
-static char lower_ascii(char c){return(c>='A'&&c<='Z')?(char)(c+('a'-'A')):c;}
-static BOOL streqi(const char* a,const char* b){if(!a||!b)return FALSE;while(*a&&*b){if(lower_ascii(*a)!=lower_ascii(*b))return FALSE;++a;++b;}return *a==*b;}
 static BOOL nameeq8(const BYTE* p,const char* s){for(int i=0;i<8;++i){char c=(char)p[i],w=s[i];if(c!=w)return FALSE;if(!w)return TRUE;}return s[8]==0;}
 static BOOL guid_equal(const GUID_X* a,const GUID_X* b){if(!a||!b)return FALSE;if(a->Data1!=b->Data1||a->Data2!=b->Data2||a->Data3!=b->Data3)return FALSE;for(int i=0;i<8;++i)if(a->Data4[i]!=b->Data4[i])return FALSE;return TRUE;}
 static UINT32 guid_kind(const GUID_X* g){if(!g)return 0;if(guid_equal(g,&kGuidXAxis))return 1;if(guid_equal(g,&kGuidYAxis))return 2;if(guid_equal(g,&kGuidZAxis))return 3;return 0;}
@@ -267,6 +286,7 @@ static void build_path(char* out,DWORD cap,const char* name){
 static void status_lock(){while(__sync_val_compare_and_swap(&g_status_lock,0,1)!=0){if(pSleep)pSleep(0);}}
 static void status_unlock(){__sync_lock_release(&g_status_lock);}
 static void status_text(const char* s){if(g_status==INVALID_HANDLE_VALUE)return;status_lock();DWORD w=0;WriteFile(g_status,s,cstrlen(s),&w,0);status_unlock();}
+
 
 static void snapshot_state(void* self,StateSnapshot* s){
     s->bits_04=read_u32(self,0x04);s->bits_08=read_u32(self,0x08);s->bits_0c=read_u32(self,0x0C);s->bits_10=read_u32(self,0x10);
@@ -358,11 +378,11 @@ static BOOL resolve_apis(){
 }
 
 // -----------------------------------------------------------------------------
-// PE fingerprint, signatures and inline hooks (same signatures/callsites as v0.8.2)
+// PE fingerprint, signatures and inline hooks (validated runtime signatures and camera-path links)
 // -----------------------------------------------------------------------------
-static BOOL pe_info(BYTE* base,DWORD* timestamp,DWORD* image_size,BYTE** text,DWORD* text_rva,DWORD* text_size){
+static BOOL pe_info(BYTE* base,DWORD* timestamp,DWORD* image_size,DWORD* entry_rva,BYTE** text,DWORD* text_rva,DWORD* text_size){
     if(!base||base[0]!='M'||base[1]!='Z')return FALSE;DWORD e=*(DWORD*)(base+0x3C);BYTE* pe=base+e;if(*(DWORD*)pe!=0x00004550UL||*(WORD*)(pe+4)!=0x014C)return FALSE;
-    WORD ns=*(WORD*)(pe+6);*timestamp=*(DWORD*)(pe+8);BYTE* opt=pe+24;if(*(WORD*)opt!=0x010B)return FALSE;*image_size=*(DWORD*)(opt+0x38);WORD optsz=*(WORD*)(pe+20);BYTE* sh=opt+optsz;
+    WORD ns=*(WORD*)(pe+6);*timestamp=*(DWORD*)(pe+8);BYTE* opt=pe+24;if(*(WORD*)opt!=0x010B)return FALSE;*entry_rva=*(DWORD*)(opt+0x10);*image_size=*(DWORD*)(opt+0x38);WORD optsz=*(WORD*)(pe+20);BYTE* sh=opt+optsz;
     for(WORD i=0;i<ns;++i,sh+=40){if(nameeq8(sh,".text")){DWORD vs=*(DWORD*)(sh+8),rva=*(DWORD*)(sh+12);*text=base+rva;*text_rva=rva;*text_size=vs;return TRUE;}}return FALSE;
 }
 static BOOL match_mask(const BYTE* p,const BYTE* pat,const char* mask,DWORD n){for(DWORD i=0;i<n;++i)if(mask[i]=='x'&&p[i]!=pat[i])return FALSE;return TRUE;}
@@ -370,8 +390,23 @@ static BYTE* find_processor(BYTE* text,DWORD size,DWORD* matches){static const B
 static BYTE* find_abc510(BYTE* text,DWORD size,DWORD* matches){static const BYTE pat[]={0x55,0x8B,0xEC,0x53,0x8B,0xD9,0x80,0xBB,0x50,0x49,0x00,0x00,0x00,0x0F,0x84,0,0,0,0,0x8B,0x45,0x08,0x3C,0x12};static const char mask[]="xxxxxxxxxxxxxxx????xxxxx";BYTE* found=0;*matches=0;for(DWORD i=0;i+sizeof(pat)<=size;++i)if(text[i]==0x55&&match_mask(text+i,pat,mask,sizeof(pat))){found=text+i;++*matches;}return found;}
 static BYTE* find_ab9830(BYTE* text,DWORD size,DWORD* matches){static const BYTE pat[]={0x55,0x8B,0xEC,0xD9,0x45,0x10,0xD9,0x05,0,0,0,0,0xD9,0xC0,0xDD,0xEA,0xDF,0xE0,0xDD,0xD9,0xF6,0xC4,0x44};static const char mask[]="xxxxxxxx????xxxxxxxxxxx";BYTE* found=0;*matches=0;for(DWORD i=0;i+sizeof(pat)<=size;++i)if(text[i]==0x55&&match_mask(text+i,pat,mask,sizeof(pat))){found=text+i;++*matches;}return found;}
 static BYTE* rel32_call_target(BYTE* call){if(!call||call[0]!=0xE8)return 0;INT32 rel=*(INT32*)(call+1);return call+5+rel;}
-static DWORD collect_direct_call_returns(BYTE* text,DWORD size,BYTE* target,UINT32* out,DWORD cap){DWORD count=0;for(DWORD i=0;i+5<=size;++i){if(text[i]!=0xE8)continue;INT32 rel=*(const INT32*)(text+i+1);BYTE* dst=text+i+5+rel;if(dst==target){if(count<cap)out[count]=(UINT32)((text+i+5)-g_base);++count;}}return count;}
-static BOOL expected_callsites(const UINT32* got,DWORD count){static const UINT32 expected[]={0x00149F2E,0x0014F806,0x00190725,0x00247892,0x002788AE,0x0027932C,0x0027A4BA,0x0033F407,0x0034E6A5};if(count!=sizeof(expected)/sizeof(expected[0]))return FALSE;for(DWORD i=0;i<count;++i)if(got[i]!=expected[i])return FALSE;return TRUE;}
+struct CameraPairCandidate { UINT32 abc_return_rva,d820_return_rva,gap; };
+static DWORD collect_camera_pairs(BYTE* text,DWORD size,BYTE* abc,BYTE* d820,CameraPairCandidate* out,DWORD cap){
+    DWORD count=0;for(DWORD i=0;i+5<=size;++i){if(text[i]!=0xE8||rel32_call_target(text+i)!=d820)continue;DWORD begin=i>64?i-64:0;BYTE* nearest=0;
+        for(DWORD j=begin;j+5<=i;++j)if(text[j]==0xE8&&rel32_call_target(text+j)==abc)nearest=text+j;
+        if(nearest){UINT32 ar=(UINT32)((nearest+5)-g_base),dr=(UINT32)((text+i+5)-g_base);if(count<cap){out[count].abc_return_rva=ar;out[count].d820_return_rva=dr;out[count].gap=dr-ar;}++count;}
+    }return count<cap?count:cap;
+}
+static BOOL assign_camera_profiles(const CameraPairCandidate* p,DWORD n,UINT32* hip_a,UINT32* hip_d,UINT32* ads_a,UINT32* ads_d){
+    BOOL hip=FALSE,ads=FALSE;for(DWORD i=0;i<n;++i){if(p[i].abc_return_rva==kRefHipABC510ReturnRva&&p[i].d820_return_rva==kRefHipD820ReturnRva){*hip_a=p[i].abc_return_rva;*hip_d=p[i].d820_return_rva;hip=TRUE;}if(p[i].abc_return_rva==kRefAdsABC510ReturnRva&&p[i].d820_return_rva==kRefAdsD820ReturnRva){*ads_a=p[i].abc_return_rva;*ads_d=p[i].d820_return_rva;ads=TRUE;}}
+    if(hip&&ads)return TRUE;hip=ads=FALSE;DWORD hip_count=0,ads_count=0;for(DWORD i=0;i<n;++i){if(p[i].gap==0x1AU){*hip_a=p[i].abc_return_rva;*hip_d=p[i].d820_return_rva;++hip_count;}if(p[i].gap==0x17U){*ads_a=p[i].abc_return_rva;*ads_d=p[i].d820_return_rva;++ads_count;}}
+    return hip_count==1&&ads_count==1;
+}
+static BOOL find_ab9830_internal_return(BYTE* abc,BYTE* curve,UINT32* out_rva,DWORD* out_matches){
+    *out_rva=0;*out_matches=0;if(!abc||!curve)return FALSE;BYTE* exact=g_base+(kRefAB9830ReturnRva-5);if(exact>=abc&&exact<abc+0x400&&rel32_call_target(exact)==curve){*out_rva=kRefAB9830ReturnRva;*out_matches=1;return TRUE;}
+    for(DWORD i=0;i+5<=0x400;++i){BYTE* c=abc+i;if(c[0]==0xE8&&rel32_call_target(c)==curve){*out_rva=(UINT32)((c+5)-g_base);++*out_matches;}}
+    return *out_matches==1;
+}
 static BOOL bytes_equal(const BYTE* p,const BYTE* q,DWORD n){for(DWORD i=0;i<n;++i)if(p[i]!=q[i])return FALSE;return TRUE;}
 static LPVOID install_hook(BYTE* target,const BYTE* expected,DWORD n,LPVOID hook){
     if(n<5||!bytes_equal(target,expected,n))return 0;BYTE* tramp=(BYTE*)pVirtualAlloc(0,n+5,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);if(!tramp)return 0;
@@ -391,10 +426,35 @@ static BOOL readable_span(const void* ptr,SIZE_T bytes){
     if(!ptr||bytes==0)return FALSE;const BYTE* p=(const BYTE*)ptr;SIZE_T remain=bytes;while(remain){MEMORY_BASIC_INFORMATION_X mbi;SIZE_T got=pVirtualQuery(p,&mbi,sizeof(mbi));if(got<sizeof(mbi)||mbi.State!=MEM_COMMIT||(mbi.Protect&PAGE_NOACCESS)||(mbi.Protect&PAGE_GUARD))return FALSE;const BYTE* end=(const BYTE*)mbi.BaseAddress+mbi.RegionSize;if(p>=end)return FALSE;SIZE_T avail=(SIZE_T)(end-p),step=avail<remain?avail:remain;p+=step;remain-=step;}return TRUE;
 }
 
+struct DInputImportInfo { DWORD descriptor_rva,oft_rva,iat_rva,index; DWORD* slot; DWORD matches; };
+
+static BOOL ascii_eq_rva(BYTE* base,DWORD image_size,DWORD rva,const char* wanted){
+    if(!base||!wanted||rva>=image_size)return FALSE;DWORD i=0;while(wanted[i]){if(rva+i>=image_size||base[rva+i]!=(BYTE)wanted[i])return FALSE;++i;}return rva+i<image_size&&base[rva+i]==0;
+}
+static BOOL find_section_range(BYTE* base,const char* wanted,DWORD* out_rva,DWORD* out_size){
+    if(!base||!wanted)return FALSE;DWORD e=*(DWORD*)(base+0x3C);BYTE* pe=base+e;if(*(DWORD*)pe!=0x00004550UL)return FALSE;WORD ns=*(WORD*)(pe+6),optsz=*(WORD*)(pe+20);BYTE* opt=pe+24;BYTE* sh=opt+optsz;
+    for(WORD i=0;i<ns;++i,sh+=40){if(nameeq8(sh,wanted)){*out_rva=*(DWORD*)(sh+12);*out_size=*(DWORD*)(sh+8);return TRUE;}}return FALSE;
+}
+static BOOL locate_hidden_dinput_import(BYTE* base,DWORD image_size,DInputImportInfo* out){
+    if(!base||!out)return FALSE;zero_bytes(out,sizeof(*out));const char* sections[2]={".rdata",".data"};
+    for(UINT32 si=0;si<2;++si){DWORD sec_rva=0,sec_size=0;if(!find_section_range(base,sections[si],&sec_rva,&sec_size)||sec_rva>=image_size)continue;if(sec_size>image_size-sec_rva)sec_size=image_size-sec_rva;
+        for(DWORD off=0;off+20<=sec_size;off+=4){BYTE* d=base+sec_rva+off;DWORD oft=*(DWORD*)(d+0),name=*(DWORD*)(d+12),ft=*(DWORD*)(d+16);if(!oft||!name||!ft||oft>=image_size||name>=image_size||ft>=image_size)continue;if(!ascii_eq_rva(base,image_size,name,"DINPUT8.dll"))continue;
+            DWORD found_index=UINT_ERROR;for(DWORD i=0;i<64&&oft+i*4+4<=image_size;++i){DWORD thunk=*(DWORD*)(base+oft+i*4);if(!thunk)break;if(thunk&0x80000000UL)continue;if(thunk+2>=image_size)continue;if(ascii_eq_rva(base,image_size,thunk+2,"DirectInput8Create")){if(found_index!=UINT_ERROR){found_index=UINT_ERROR;break;}found_index=i;}}
+            if(found_index==UINT_ERROR)continue;++out->matches;out->descriptor_rva=sec_rva+off;out->oft_rva=oft;out->iat_rva=ft+found_index*4;out->index=found_index;out->slot=(DWORD*)(base+out->iat_rva);
+        }
+    }return out->matches==1&&out->slot!=0;
+}
+static BOOL executable_pointer(LPVOID p){
+    if(!p)return FALSE;MEMORY_BASIC_INFORMATION_X mbi;SIZE_T got=pVirtualQuery(p,&mbi,sizeof(mbi));if(got<sizeof(mbi)||mbi.State!=MEM_COMMIT||(mbi.Protect&PAGE_GUARD)||(mbi.Protect&PAGE_NOACCESS))return FALSE;DWORD prot=mbi.Protect&0xFF;return prot==PAGE_EXECUTE||prot==PAGE_EXECUTE_READ||prot==PAGE_EXECUTE_READWRITE||prot==PAGE_EXECUTE_WRITECOPY;
+}
+static BOOL dinput_iat_ready(const DInputImportInfo* info,DWORD image_size,UINT32* value){
+    if(value)*value=0;if(!info||!info->slot||!readable_span(info->slot,sizeof(DWORD)))return FALSE;UINT32 v=*info->slot;if(value)*value=v;if(!v)return FALSE;if(v+2U>v&&v+2U<image_size&&ascii_eq_rva(g_base,image_size,v+2U,"DirectInput8Create"))return FALSE;return executable_pointer((LPVOID)(ULONG_PTR)v);
+}
+
 // -----------------------------------------------------------------------------
 // In-place COM vtable slot patching. Object vptr is never replaced.
-// Final build patches only the slots required by the fix: CreateDevice,
-// SetDataFormat, GetDeviceState. Observation-only v0.8.2 hooks are removed.
+// The build patches only the slots required by the fix: CreateDevice, SetDataFormat,
+// and GetDeviceState. No COM object vptr is replaced.
 // -----------------------------------------------------------------------------
 extern "C" HRESULT WINAPI hook_DI8_CreateDevice(LPVOID,const GUID_X*,LPVOID*,LPVOID);
 extern "C" HRESULT WINAPI hook_Mouse_SetDataFormat(LPVOID,const DIDATAFORMAT_X*);
@@ -432,11 +492,14 @@ static LPVOID original_slot_for_self(LPVOID self,UINT32 kind,UINT32 slot){Vtable
 // -----------------------------------------------------------------------------
 extern "C" HRESULT WINAPI hook_DirectInput8Create(HINSTANCE hinst,DWORD version,const GUID_X* riid,LPVOID* out,LPVOID punk){
     DWORD incoming_error=pGetLastError();pSetLastError(incoming_error);HRESULT hr=g_real_DirectInput8Create(hinst,version,riid,out,punk);DWORD api_error=pGetLastError();
-    LPVOID object=(hr_success(hr)&&out&&readable_span(out,sizeof(LPVOID)))?*out:0;if(object)prepare_di8_vtable(object);pSetLastError(api_error);return hr;
+    LPVOID object=(hr_success(hr)&&out&&readable_span(out,sizeof(LPVOID)))?*out:0;if(object)prepare_di8_vtable(object);
+    pSetLastError(api_error);return hr;
 }
 extern "C" HRESULT WINAPI hook_DI8_CreateDevice(LPVOID self,const GUID_X* rguid,LPVOID* out,LPVOID punk){
     DWORD incoming_error=pGetLastError();DI8CreateDeviceFn original=(DI8CreateDeviceFn)original_slot_for_self(self,1,3);if(!original){pSetLastError(incoming_error);return(HRESULT)0x80004005L;}
-    BOOL mouse=FALSE;if(rguid&&readable_span(rguid,sizeof(GUID_X)))mouse=is_mouse_guid(rguid);pSetLastError(incoming_error);HRESULT hr=original(self,rguid,out,punk);DWORD api_error=pGetLastError();LPVOID dev=(hr_success(hr)&&out&&readable_span(out,sizeof(LPVOID)))?*out:0;if(mouse&&dev)add_mouse_device(dev);pSetLastError(api_error);return hr;
+    BOOL mouse=FALSE;if(rguid&&readable_span(rguid,sizeof(GUID_X)))mouse=is_mouse_guid(rguid);pSetLastError(incoming_error);HRESULT hr=original(self,rguid,out,punk);DWORD api_error=pGetLastError();LPVOID dev=(hr_success(hr)&&out&&readable_span(out,sizeof(LPVOID)))?*out:0;
+    if(mouse&&dev)add_mouse_device(dev);
+    pSetLastError(api_error);return hr;
 }
 extern "C" HRESULT WINAPI hook_Mouse_SetDataFormat(LPVOID self,const DIDATAFORMAT_X* fmt){
     DWORD incoming_error=pGetLastError();DIDSetDataFormatFn original=(DIDSetDataFormatFn)original_slot_for_self(self,2,11);MouseDevice* md=find_mouse_device(self);if(!original){pSetLastError(incoming_error);return(HRESULT)0x80004005L;}if(!md){pSetLastError(incoming_error);return original(self,fmt);}
@@ -454,12 +517,9 @@ extern "C" HRESULT WINAPI hook_Mouse_GetDeviceState(LPVOID self,DWORD cb,LPVOID 
     pSetLastError(api_error);return hr;
 }
 
-static BOOL patch_directinput8_import(){
-    BYTE* base=g_base;DWORD e=*(DWORD*)(base+0x3C);BYTE* pe=base+e;BYTE* opt=pe+24;DWORD import_rva=*(DWORD*)(opt+0x68);if(!import_rva)return FALSE;BYTE* desc=base+import_rva;
-    for(;*(DWORD*)desc||*(DWORD*)(desc+12)||*(DWORD*)(desc+16);desc+=20){DWORD oft=*(DWORD*)(desc+0),name_rva=*(DWORD*)(desc+12),ft=*(DWORD*)(desc+16);if(!name_rva||!ft)continue;const char* dll=(const char*)(base+name_rva);if(!streqi(dll,"DINPUT8.dll"))continue;DWORD* names=(DWORD*)(base+(oft?oft:ft));DWORD* iat=(DWORD*)(base+ft);
-        for(DWORD i=0;names[i];++i){if(names[i]&0x80000000UL)continue;const char* fn=(const char*)(base+names[i]+2);if(!streq(fn,"DirectInput8Create"))continue;DWORD old=iat[i];if(!old)return FALSE;if(old==(DWORD)(ULONG_PTR)hook_DirectInput8Create)return TRUE;
-            DWORD oldp=0;if(!pVirtualProtect(&iat[i],sizeof(DWORD),PAGE_READWRITE,&oldp))return FALSE;g_real_DirectInput8Create=(DirectInput8CreateFn)(ULONG_PTR)old;iat[i]=(DWORD)(ULONG_PTR)hook_DirectInput8Create;DWORD ignored=0;pVirtualProtect(&iat[i],sizeof(DWORD),oldp,&ignored);return TRUE;}
-    }return FALSE;
+static BOOL patch_directinput8_slot(DWORD* slot){
+    if(!slot||!readable_span(slot,sizeof(DWORD)))return FALSE;DWORD old=*slot;if(!old)return FALSE;if(old==(DWORD)(ULONG_PTR)hook_DirectInput8Create)return TRUE;if(!executable_pointer((LPVOID)(ULONG_PTR)old))return FALSE;
+    DWORD oldp=0;if(!pVirtualProtect(slot,sizeof(DWORD),PAGE_READWRITE,&oldp))return FALSE;BOOL ok=FALSE;if(*slot==old){g_real_DirectInput8Create=(DirectInput8CreateFn)(ULONG_PTR)old;*slot=(DWORD)(ULONG_PTR)hook_DirectInput8Create;__sync_synchronize();ok=(*slot==(DWORD)(ULONG_PTR)hook_DirectInput8Create);}DWORD ignored=0;pVirtualProtect(slot,sizeof(DWORD),oldp,&ignored);return ok;
 }
 
 // -----------------------------------------------------------------------------
@@ -467,13 +527,13 @@ static BOOL patch_directinput8_import(){
 // -----------------------------------------------------------------------------
 extern "C" UINT32 __attribute__((fastcall)) hook_abc510(void* self,void*,UINT32 a1,UINT32 a2,UINT32 a3,UINT32 a4,UINT32 a5,UINT32 a6,UINT32 a7,UINT32 a8,UINT32 a9){
     UINT32 tid=pGetCurrentThreadId();UINT32 ret=(UINT32)(ULONG_PTR)__builtin_return_address(0);LONG profile=PROFILE_NONE;
-    if(g_base&&ret==(UINT32)(ULONG_PTR)(g_base+kHipABC510ReturnRva))profile=PROFILE_HIP;else if(g_base&&ret==(UINT32)(ULONG_PTR)(g_base+kAdsABC510ReturnRva))profile=PROFILE_ADS;
+    if(g_base&&ret==(UINT32)(ULONG_PTR)(g_base+g_hip_abc_return_rva))profile=PROFILE_HIP;else if(g_base&&ret==(UINT32)(ULONG_PTR)(g_base+g_ads_abc_return_rva))profile=PROFILE_ADS;
     PathGateSlot* slot=0;if(profile!=PROFILE_NONE){slot=path_gate_slot(tid,TRUE);if(slot){if(profile==PROFILE_HIP)__sync_add_and_fetch(&slot->hip_depth,1);else __sync_add_and_fetch(&slot->ads_depth,1);}}
     UINT32 result=g_abc510(self,a1,a2,a3,a4,a5,a6,a7,a8,a9);if(slot){if(profile==PROFILE_HIP)__sync_sub_and_fetch(&slot->hip_depth,1);else if(profile==PROFILE_ADS)__sync_sub_and_fetch(&slot->ads_depth,1);}return result;
 }
 extern "C" void __attribute__((fastcall)) hook_ab9830(void* self,void*,float* x,float* y,float curve0,float curve1){
     long long begin=qpc_now();UINT32 tid=pGetCurrentThreadId();UINT32 ret=(UINT32)(ULONG_PTR)__builtin_return_address(0);LONG profile=path_gate_profile(tid);LONG depth=path_gate_depth(tid,profile);
-    BOOL targeted=(g_base&&profile!=PROFILE_NONE&&depth>0&&ret==(UINT32)(ULONG_PTR)(g_base+kTargetAB9830ReturnRva));float pre_x=0.0f,pre_y=0.0f;FreshMouseClaim claim;claim.fresh=FALSE;claim.nonzero=FALSE;claim.x=claim.y=0;claim.generation=claim.age_ticks=0;BOOL pre_over=FALSE;
+    BOOL targeted=(g_base&&profile!=PROFILE_NONE&&depth>0&&ret==(UINT32)(ULONG_PTR)(g_base+g_ab9830_return_rva));float pre_x=0.0f,pre_y=0.0f;FreshMouseClaim claim;claim.fresh=FALSE;claim.nonzero=FALSE;claim.x=claim.y=0;claim.generation=claim.age_ticks=0;BOOL pre_over=FALSE;
     if(targeted){pre_x=x?*x:0.0f;pre_y=y?*y:0.0f;float mag2=pre_x*pre_x+pre_y*pre_y;pre_over=(mag2>1.0f);claim=fresh_mouse_claim(tid,begin);}
     g_ab9830(self,x,y,curve0,curve1);
     if(targeted){BOOL fresh_nonzero=(claim.fresh&&claim.nonzero&&g_qpc_frequency>0&&((long long)claim.age_ticks*1000000LL)<=g_qpc_frequency*(long long)kFreshMouseWindowUs);if(g_fix_active&&fresh_nonzero&&pre_over&&x&&y){*x=pre_x;*y=pre_y;mouse_tail_start(tid,qpc_now(),profile);}}
@@ -484,7 +544,7 @@ extern "C" void __attribute__((fastcall)) hook_ab9830(void* self,void*,float* x,
 // -----------------------------------------------------------------------------
 extern "C" BOOL __attribute__((fastcall)) hook_processor(void* self,void*,float dt,float* x,float* y){
     void* ret=__builtin_return_address(0);BOOL result=g_processor(self,dt,x,y);long long now=qpc_now();if(!g_fix_active||!result)return result;
-    UINT32 ret_addr=(UINT32)(ULONG_PTR)ret;LONG profile=PROFILE_NONE;if(g_base&&ret_addr==(UINT32)(ULONG_PTR)(g_base+kHipD820ReturnRva))profile=PROFILE_HIP;else if(g_base&&ret_addr==(UINT32)(ULONG_PTR)(g_base+kAdsD820ReturnRva))profile=PROFILE_ADS;if(profile==PROFILE_NONE)return result;
+    UINT32 ret_addr=(UINT32)(ULONG_PTR)ret;LONG profile=PROFILE_NONE;if(g_base&&ret_addr==(UINT32)(ULONG_PTR)(g_base+g_hip_d820_return_rva))profile=PROFILE_HIP;else if(g_base&&ret_addr==(UINT32)(ULONG_PTR)(g_base+g_ads_d820_return_rva))profile=PROFILE_ADS;if(profile==PROFILE_NONE)return result;
     UINT32 tid=pGetCurrentThreadId();MouseTailSlot* tail=mouse_tail_slot(tid,FALSE);if(!tail||!tail->active||tail->profile!=profile)return result;
     LONG gen=tail->generation;long long age=now-tail->last_bypass_qpc;if(age<0)age=0;BOOL timed_out=(g_qpc_frequency>0&&age*1000000LL>g_qpc_frequency*(long long)kTailTimeoutUs);if(timed_out){tail->active=0;tail->profile=PROFILE_NONE;tail->stable_under_count=0;return result;}
     StateSnapshot post;snapshot_state(self,&post);D820Model model;model.valid=FALSE;model.preclamp_x=model.preclamp_y=model.scale=model.limit=0.0f;if(!reconstruct_d820_model(&post,&model))return result;
@@ -495,47 +555,84 @@ extern "C" BOOL __attribute__((fastcall)) hook_processor(void* self,void*,float 
 }
 
 // -----------------------------------------------------------------------------
-// Initialization: verify exact executable/path links, install only required hooks.
-// No runtime logger. INI 0 means completely inert after startup.
+// Initialization: verify retail executable/path links and install only required hooks.
+// INI 0 means completely inert after startup.
 // -----------------------------------------------------------------------------
 static DWORD WINAPI init_thread(LPVOID){
     char status_path[1024];build_path(status_path,1024,"DS3_LinearMouseFix.status.txt");g_status=CreateFileA(status_path,GENERIC_WRITE,FILE_SHARE_READ,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
-    status_text("Dead Space 3 Linear Mouse Fix v1.0\r\n");status_text("Final lightweight HIP + ADS build; no binary logger or Raw Input monitor.\r\n");
-    if(!resolve_apis()){status_text("REFUSED: required Win32 API resolution failed.\r\n");return 0;}
+    status_text("Dead Space 3 Linear Mouse Fix v1.1\r\n");
+    status_text("STATUS: initializing\r\n");
+    if(!resolve_apis()){status_text("STATUS: refused - required system API unavailable\r\n");return 0;}
     char ini_path[1024];build_path(ini_path,1024,"DS3_LinearMouseFix.ini");g_config_enabled=pGetPrivateProfileIntA?pGetPrivateProfileIntA("Mouse","EnableLinearMouseFix",1,ini_path)?1:0:1;
-    status_text(g_config_enabled?"CONFIG EnableLinearMouseFix=1\r\n":"CONFIG EnableLinearMouseFix=0\r\n");if(!g_config_enabled){status_text("DISABLED: no hooks installed.\r\n");return 0;}
+    status_text(g_config_enabled?"CONFIG EnableLinearMouseFix=1\r\n":"CONFIG EnableLinearMouseFix=0\r\n");if(!g_config_enabled){status_text("STATUS: disabled\r\n");return 0;}
 
-    g_base=(BYTE*)GetModuleHandleA(0);DWORD ts=0,image_size=0,text_rva=0,text_size=0;BYTE* text=0;if(!pe_info(g_base,&ts,&image_size,&text,&text_rva,&text_size)){status_text("REFUSED: invalid/non-x86 PE image.\r\n");return 0;}
-    if(ts!=0x511E9327UL||(image_size!=0x012D4000UL&&image_size!=0x012D6000UL)){status_text("REFUSED: DS3 executable fingerprint mismatch.\r\n");return 0;}
-    LARGE_INTEGER_X fq;fq.QuadPart=0;if(!pQueryPerformanceFrequency(&fq)||fq.QuadPart<=0){status_text("REFUSED: QueryPerformanceFrequency failed.\r\n");return 0;}g_qpc_frequency=fq.QuadPart;
+    g_base=(BYTE*)GetModuleHandleA(0);DWORD ts=0,image_size=0,entry_rva=0,text_rva=0,text_size=0;BYTE* text=0;
+    if(!pe_info(g_base,&ts,&image_size,&entry_rva,&text,&text_rva,&text_size)){status_text("STATUS: refused - invalid executable\r\n");return 0;}
+    (void)text_rva;
+    if(ts!=0x511E9327UL||image_size!=0x012D6000UL||entry_rva!=0x012D4830UL){status_text("STATUS: refused - unsupported executable layout\r\n");return 0;}
+    LARGE_INTEGER_X fq;fq.QuadPart=0;if(!pQueryPerformanceFrequency(&fq)||fq.QuadPart<=0){status_text("STATUS: refused - timing initialization failed\r\n");return 0;}g_qpc_frequency=fq.QuadPart;
     scan_modules();
 
-    // Patch the proven static DINPUT8 import first so the mouse device is seen even if
-    // DirectInput initializes while the .text verification below is finishing.
-    BOOL di_ok=patch_directinput8_import();
+    DInputImportInfo diinfo;BOOL di_desc=locate_hidden_dinput_import(g_base,image_size,&diinfo);
 
-    BYTE* d820=0;DWORD d820_matches=0;for(DWORD attempt=0;attempt<240;++attempt){d820=find_processor(text,text_size,&d820_matches);if(d820_matches==1&&d820)break;pSleep(250);}
-    DWORD abc_matches=0,curve_matches=0;BYTE* abc=find_abc510(text,text_size,&abc_matches);BYTE* curve=find_ab9830(text,text_size,&curve_matches);
-    if(d820_matches!=1||!d820||abc_matches!=1||!abc||curve_matches!=1||!curve){status_text("REFUSED: required runtime signatures are not unique.\r\n");return 0;}
+    BOOL retail_layout=(di_desc&&diinfo.iat_rva==0x0091C024UL);
+    if(retail_layout)status_text("BUILD: official retail EA/Steam x86 layout recognized\r\n");
+    else {status_text("STATUS: refused - retail DirectInput import layout not found\r\n");return 0;}
 
-    UINT32 calls[32];DWORD call_count=collect_direct_call_returns(text,text_size,d820,calls,32);if(!expected_callsites(calls,call_count)){status_text("REFUSED: D820 caller set mismatch.\r\n");return 0;}
-    BYTE* hip_abc_call=g_base+0x0033F3E8U;BYTE* ads_abc_call=g_base+0x00149F12U;BYTE* curve_call=g_base+0x006BC594U;BYTE* hip_d820_call=g_base+0x0033F402U;BYTE* ads_d820_call=g_base+0x00149F29U;
-    BOOL links_ok=(rel32_call_target(hip_abc_call)==abc)&&(rel32_call_target(ads_abc_call)==abc)&&(rel32_call_target(curve_call)==curve)&&(rel32_call_target(hip_d820_call)==d820)&&(rel32_call_target(ads_d820_call)==d820);
-    if(!links_ok){status_text("REFUSED: HIP/ADS camera-path link verification failed.\r\n");return 0;}
+    status_text("STATUS: waiting for runtime code initialization\r\n");
 
+    BYTE* d820=0;BYTE* abc=0;BYTE* curve=0;DWORD d820_matches=0,abc_matches=0,curve_matches=0;
+    UINT32 hip_a=0,hip_d=0,ads_a=0,ads_d=0,ab_ret=0;DWORD ab_call_matches=0,pair_count=0;
+    BOOL targets_ready=FALSE,di_ready=FALSE,paths_ready=FALSE;
     static const BYTE d820_pro[]={0x55,0x8B,0xEC,0x83,0xEC,0x14};
     static const BYTE abc_pro[]={0x55,0x8B,0xEC,0x53,0x8B,0xD9};
     static const BYTE curve_pro[]={0x55,0x8B,0xEC,0xD9,0x45,0x10};
-    if(!bytes_equal(d820,d820_pro,sizeof(d820_pro))||!bytes_equal(abc,abc_pro,sizeof(abc_pro))||!bytes_equal(curve,curve_pro,sizeof(curve_pro))){status_text("REFUSED: hook prologue mismatch.\r\n");return 0;}
+    DWORD elapsed=0;
+    for(;elapsed<=kInitTimeoutMs;elapsed+=kInitPollMs){
+        if(!di_desc)di_desc=locate_hidden_dinput_import(g_base,image_size,&diinfo);
+        if(di_desc&&!di_ready)di_ready=dinput_iat_ready(&diinfo,image_size,0);
 
-    g_processor=(ProcessorFn)install_hook(d820,d820_pro,sizeof(d820_pro),(LPVOID)hook_processor);
+        BOOL reference_prologues=FALSE;
+        if(kRefD820Rva+sizeof(d820_pro)<=image_size&&kRefABC510Rva+sizeof(abc_pro)<=image_size&&kRefAB9830Rva+sizeof(curve_pro)<=image_size){
+            reference_prologues=bytes_equal(g_base+kRefD820Rva,d820_pro,sizeof(d820_pro))&&bytes_equal(g_base+kRefABC510Rva,abc_pro,sizeof(abc_pro))&&bytes_equal(g_base+kRefAB9830Rva,curve_pro,sizeof(curve_pro));
+        }
+        BOOL do_full_scan=reference_prologues||(elapsed%1000U)==0U;
+        if((!targets_ready||!paths_ready)&&do_full_scan){
+            d820=find_processor(text,text_size,&d820_matches);abc=find_abc510(text,text_size,&abc_matches);curve=find_ab9830(text,text_size,&curve_matches);
+            targets_ready=(d820_matches==1&&d820&&abc_matches==1&&abc&&curve_matches==1&&curve);
+            if(targets_ready){
+                CameraPairCandidate pairs[16];pair_count=collect_camera_pairs(text,text_size,abc,d820,pairs,16);paths_ready=assign_camera_profiles(pairs,pair_count,&hip_a,&hip_d,&ads_a,&ads_d)&&find_ab9830_internal_return(abc,curve,&ab_ret,&ab_call_matches);
+            }
+        }
+        if(targets_ready&&paths_ready&&di_ready)break;
+        pSleep(kInitPollMs);
+    }
+
+    BOOL target_ok=(d820_matches==1&&d820&&abc_matches==1&&abc&&curve_matches==1&&curve);
+    BOOL path_ok=(paths_ready&&hip_a&&hip_d&&ads_a&&ads_d&&ab_ret);
+    if(!target_ok){status_text("STATUS: refused - runtime targets not uniquely identified\r\n");return 0;}
+    if(!path_ok){status_text("STATUS: refused - HIP/ADS path validation failed\r\n");return 0;}
+    if(!di_ready){status_text("STATUS: refused - DirectInput initialization not ready\r\n");return 0;}
+
+
+    // Final validation happens before the first write/hook.
+    BOOL final_links=(hip_a>=5&&hip_d>=5&&ads_a>=5&&ads_d>=5&&ab_ret>=5&&rel32_call_target(g_base+hip_a-5)==abc&&rel32_call_target(g_base+hip_d-5)==d820&&rel32_call_target(g_base+ads_a-5)==abc&&rel32_call_target(g_base+ads_d-5)==d820&&rel32_call_target(g_base+ab_ret-5)==curve);
+    if(!bytes_equal(d820,d820_pro,sizeof(d820_pro))||!bytes_equal(abc,abc_pro,sizeof(abc_pro))||!bytes_equal(curve,curve_pro,sizeof(curve_pro))||!final_links){status_text("STATUS: refused - validated runtime code changed before activation\r\n");return 0;}
+    g_hip_abc_return_rva=hip_a;g_hip_d820_return_rva=hip_d;g_ads_abc_return_rva=ads_a;g_ads_d820_return_rva=ads_d;g_ab9830_return_rva=ab_ret;__sync_synchronize();
+
+    BOOL di_ok=patch_directinput8_slot(diinfo.slot);
+    if(!di_ok){status_text("STATUS: refused - DirectInput initialization hook failed\r\n");return 0;}
+
     g_abc510=(ABC510Fn)install_hook(abc,abc_pro,sizeof(abc_pro),(LPVOID)hook_abc510);
-    if(g_abc510)g_ab9830=(AB9830Fn)install_hook(curve,curve_pro,sizeof(curve_pro),(LPVOID)hook_ab9830);
-    if(!di_ok||!g_processor||!g_abc510||!g_ab9830){status_text("REFUSED: one or more required hooks could not be installed; correction remains inactive.\r\n");return 0;}
+    if(!g_abc510){status_text("STATUS: refused - camera input hook failed\r\n");return 0;}
+    g_ab9830=(AB9830Fn)install_hook(curve,curve_pro,sizeof(curve_pro),(LPVOID)hook_ab9830);
+    if(!g_ab9830){status_text("STATUS: refused - mouse input hook failed\r\n");return 0;}
+    g_processor=(ProcessorFn)install_hook(d820,d820_pro,sizeof(d820_pro),(LPVOID)hook_processor);
+    if(!g_processor){status_text("STATUS: refused - camera processor hook failed\r\n");return 0;}
 
     __sync_synchronize();g_fix_active=1;
-    status_text("ACTIVE: validated HIP + ADS linear mouse correction enabled.\r\n");
-    status_text("HIP ABC510=0x0033F3ED D820=0x0033F407; ADS ABC510=0x00149F17 D820=0x00149F2E.\r\n");
+    status_text("STATUS: ACTIVE\r\n");
+    status_text("PROFILE: HIP + ADS/RMB\r\n");
     return 0;
 }
 
