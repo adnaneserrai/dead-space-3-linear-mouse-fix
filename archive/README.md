@@ -5,7 +5,8 @@ development of the Dead Space 3 Linear Mouse Fix.
 
 These versions are preserved for historical and technical reference.
 
-For normal gameplay, use the latest stable v1.0 release.
+For normal gameplay, use the latest stable release (v1.1) from the
+[Releases page](https://github.com/adnaneserrai/dead-space-3-linear-mouse-fix/releases).
 
 ## Development history
 
@@ -19,3 +20,4 @@ For normal gameplay, use the latest stable v1.0 release.
 - v0.8.1 — D820 unclamp experiment
 - v0.8.2 — HIP + ADS/RMB experimental fix
 - v1.0 — Final lightweight release
+- v1.1 — Official retail Steam / EA App support (current, in the repository root)

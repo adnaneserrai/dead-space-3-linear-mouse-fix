@@ -90,6 +90,19 @@ Second, the camera processor applies a per-axis limit after its internal history
 
 Values that remain within the original limits are left unchanged.
 
+## Development process
+
+The fix is the result of an iterative reverse-engineering investigation, kept in [`archive/`](archive) with the source, build command, notes and checksums of every step:
+
+1. **Measure the input** (v0.5–v0.6.1): probe plugins logged raw mouse deltas through Raw Input, then DirectInput, to confirm where the game reads the mouse.
+2. **Locate the clamps** (v0.7–v0.8): instrumented the camera pipeline to find the two functions that limit large mouse vectors, and modeled their effect offline from captured data.
+3. **Correct them selectively** (v0.8.1–v0.8.2): A/B experimental builds that undo only the clipped part of the output, first in normal camera movement, then in ADS/RMB aiming.
+4. **Ship** (v1.0–v1.1): a minimal, fail-safe plugin with runtime code validation and a bit-for-bit reproducible build.
+
+## Building from source
+
+The plugin is a single dependency-free C++ file, [`ds3_linear_mouse_fix_v11.cpp`](ds3_linear_mouse_fix_v11.cpp), built with `clang-cl` and `lld-link` for 32-bit Windows. The exact commands are in [`BUILD_COMMAND.txt`](BUILD_COMMAND.txt). Builds use `/Brepro`, so two clean builds produce identical binaries, which can be checked against [`SHA256SUMS.txt`](SHA256SUMS.txt).
+
 ## Controller behavior
 
 Controller-only camera processing remains on the game's original path. The mouse correction requires a fresh non-zero DirectInput mouse sample associated with the same thread and verified mouse-look profile before it can affect a camera call.
