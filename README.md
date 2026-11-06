@@ -101,7 +101,7 @@ The fix is the result of an iterative reverse-engineering investigation, kept in
 
 ## Building from source
 
-The plugin is a single dependency-free C++ file, [`ds3_linear_mouse_fix_v11.cpp`](ds3_linear_mouse_fix_v11.cpp), built with `clang-cl` and `lld-link` for 32-bit Windows. The exact commands are in [`BUILD_COMMAND.txt`](BUILD_COMMAND.txt). Builds use `/Brepro`, so two clean builds produce identical binaries, which can be checked against [`SHA256SUMS.txt`](SHA256SUMS.txt).
+The plugin is a single dependency-free C++ file, [`ds3_linear_mouse_fix_v11.cpp`](ds3_linear_mouse_fix_v11.cpp), built with `clang-cl` and `lld-link` for 32-bit Windows. The exact commands are in [`BUILD_COMMAND.txt`](BUILD_COMMAND.txt). Builds use `/Brepro`, so two clean builds produce identical binaries. [`SHA256SUMS.txt`](SHA256SUMS.txt) lists the checksums of the files in the v1.1 release archive, including `DS3_LinearMouseFix.asi`.
 
 ## Controller behavior
 
